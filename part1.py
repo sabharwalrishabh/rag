@@ -46,7 +46,7 @@ def retrieve(question, k=5):
     results, scores = retriever.retrieve(bm25s.tokenize(question), k=k)
     return [corpus[i] for i in results[0]]
 
-print(retrieve(question))
+# print(retrieve(question))
 
 
 #dense retrieval
@@ -66,4 +66,9 @@ def dense_retrieve(question, k=5):
     scores, indices = faiss_index.search(question_emb, k)
     return [corpus[i] for i in indices[0]]
 
-print(dense_retrieve(question))
+# print(dense_retrieve(question))
+
+if __name__ == "__main__":
+    print(retrieve(question))
+    print(dense_retrieve(question))
+

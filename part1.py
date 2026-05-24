@@ -32,8 +32,8 @@ else:
         json.dump(corpus, f)
 
 # to store all sentences which will be used for encoding later
-# sentences = [f"{title}: {text}" for title, sentence_idx, text in corpus]
-sentences = [text for _, _, text in corpus]
+sentences = [f"{title}: {text}" for title, _, text in corpus]
+# sentences = [text for _, _, text in corpus]
 # print(sentences[0])
 
 
@@ -62,6 +62,7 @@ faiss_index = faiss.IndexFlatIP(embeddings.shape[1])
 faiss_index.add(embeddings)
 
 def dense_retrieve(question, k=5):
+    question = "Represent this sentence for searching relevant passages: " + question
     question_emb = model.encode([question], normalize_embeddings=True)
     scores, indices = faiss_index.search(question_emb, k)
     return [corpus[i] for i in indices[0]]

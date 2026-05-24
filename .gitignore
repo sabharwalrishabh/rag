@@ -9,3 +9,5 @@ build/
 venv/
 
 hotpot_dev_distractor_v1.json
+embeddings.npy
+corpus.json

@@ -90,7 +90,6 @@ cross_enc_total_score = {k: {"recall": 0, "precision": 0, "f1": 0, "em": 0, "map
 
 for datapoint in data[:NUM_DATA]:
 	question = datapoint["question"]
-	# question = "Represent this sentence for searching relevant passages: " + question
 	gold_labels = datapoint["supporting_facts"]
 
 	bm25_result = retrieve(question, k=15)

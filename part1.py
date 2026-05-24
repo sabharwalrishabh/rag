@@ -40,17 +40,23 @@ sentences = [f"{title}: {text}" for title, _, text in corpus]
 retriever = bm25s.BM25()
 retriever.index(bm25s.tokenize(sentences))
 
-question="Were Scott Derrickson and Ed Wood of the same nationality?"
-
 def retrieve(question, k=5):
     results, scores = retriever.retrieve(bm25s.tokenize(question), k=k)
     return [corpus[i] for i in results[0]]
+
+question="Were Scott Derrickson and Ed Wood of the same nationality?"
 
 # print(retrieve(question))
 
 
 #dense retrieval
 model = SentenceTransformer('BAAI/bge-base-en-v1.5', device='cuda')
+
+def dense_retrieve(question, k=5):
+    question = "Represent this sentence for searching relevant passages: " + question
+    question_emb = model.encode([question], normalize_embeddings=True)
+    scores, indices = faiss_index.search(question_emb, k)
+    return [corpus[i] for i in indices[0]]
 
 if os.path.exists('embeddings.npy'):
     embeddings = np.load('embeddings.npy')
@@ -60,12 +66,6 @@ else:
 
 faiss_index = faiss.IndexFlatIP(embeddings.shape[1])
 faiss_index.add(embeddings)
-
-def dense_retrieve(question, k=5):
-    question = "Represent this sentence for searching relevant passages: " + question
-    question_emb = model.encode([question], normalize_embeddings=True)
-    scores, indices = faiss_index.search(question_emb, k)
-    return [corpus[i] for i in indices[0]]
 
 # print(dense_retrieve(question))
 

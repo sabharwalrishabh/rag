@@ -152,36 +152,36 @@ Q: {question}
 A:
 """
 
-# total_em, total_f1 = 0, 0
-# for datapoint in data[:NUM_DATA]:
-#     question = datapoint["question"]
-#     cross_enc_result = rerank_retrieve(question, k=5)
-#     # cross_enc_output = [[title, sentence_idx] for title, sentence_idx, text in cross_enc_result]
-#     facts_list = [f"{title}: {text}" for title, idx, text in cross_enc_result]
-#     facts = "\n".join(f"- {fact}" for fact in facts_list)
-#     prompt = RAG_PROMPT.format(facts=facts, question=question)
+total_em, total_f1 = 0, 0
+for datapoint in data[:NUM_DATA]:
+    question = datapoint["question"]
+    cross_enc_result = rerank_retrieve(question, k=5)
+    # cross_enc_output = [[title, sentence_idx] for title, sentence_idx, text in cross_enc_result]
+    facts_list = [f"{title}: {text}" for title, idx, text in cross_enc_result]
+    facts = "\n".join(f"- {fact}" for fact in facts_list)
+    prompt = RAG_PROMPT.format(facts=facts, question=question)
 
-#     # response = client.responses.create(
-#     #     model="gpt-4.1-mini-2025-04-14",
-#     #     input=prompt
-#     # )
+    # response = client.responses.create(
+    #     model="gpt-4.1-mini-2025-04-14",
+    #     input=prompt
+    # )
 
-#     # answer = response.output_text.strip()
-#     response = openai.chat.completions.create(
-#         model="gpt-4.1-mini-2025-04-14",
-#         messages=[{"role": "user", "content": prompt}]
-#     )
-#     answer = response.choices[0].message.content.strip()
-#     ground_truth = datapoint["answer"]
-#     em = exact_match_score(answer, ground_truth)
-#     f1, _, _ = f1_score(answer, ground_truth)
+    # answer = response.output_text.strip()
+    response = openai.chat.completions.create(
+        model="gpt-4.1-mini-2025-04-14",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    answer = response.choices[0].message.content.strip()
+    ground_truth = datapoint["answer"]
+    em = exact_match_score(answer, ground_truth)
+    f1, _, _ = f1_score(answer, ground_truth)
 
-#     total_em += em
-#     total_f1 += f1
+    total_em += em
+    total_f1 += f1
 
-# print("RAG-based QA")
-# print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
-# print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
+print("RAG-based QA")
+print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
+print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
 
 # Agentic RAG
 tools = [
@@ -267,6 +267,7 @@ tools = [
 def agentic_rag(question):
     # Get initial facts
     cross_enc_result = rerank_retrieve(question, k=5)
+    all_results = list(cross_enc_result)
     all_facts = [f"{title}: {text}" for title, idx, text in cross_enc_result]
 
     messages = [
@@ -291,6 +292,7 @@ def agentic_rag(question):
             results = rerank_retrieve(query, k=5)
             new_facts = [f"{title}: {text}" for title, idx, text in results]
             all_facts.extend(new_facts)
+            all_results.extend(results)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -308,23 +310,54 @@ def agentic_rag(question):
         model="gpt-4.1-mini-2025-04-14",
         messages=[{"role": "user", "content": prompt}]
     )
+    return response.choices[0].message.content.strip(), all_results
+
+def llm_judge(question, predicted, gold):
+    prompt = f"""You are a judge comparing two answers to a question. 
+                Determine if the predicted answer is semantically correct, even if phrased differently.
+                Question: {question}\n
+                Gold answer: {gold}\n
+                Predicted answer: {predicted}\n
+
+                Reply with EXACTLY one of:
+                - CORRECT (same meaning, different format)
+                - INCORRECT (wrong answer)
+                - PARTIAL (partially correct but missing or extra information)"""
+
+    response = openai.chat.completions.create(
+        model="gpt-4.1-2025-04-14",
+        messages=[{"role": "user", "content": prompt}]
+    )
     return response.choices[0].message.content.strip()
 
 
 total_em, total_f1 = 0, 0
 for datapoint in data[:NUM_DATA]:
     question = datapoint["question"]
-    print(f"Question: {question}\n")
-    answer = agentic_rag(question)  
-    print(f"Answer: {answer} \n")
+    answer, all_facts = agentic_rag(question)  
     ground_truth = datapoint["answer"]
-    print(f"GT: {ground_truth}\n")
+
+    gold_sf = set((t, i) for t, i in datapoint["supporting_facts"])
     
     em = exact_match_score(answer, ground_truth)
     f1, _, _ = f1_score(answer, ground_truth)
     
     total_em += em
     total_f1 += f1
+    if em == 0:
+        # Check if gold facts were retrieved
+        retrieved_ids = set((title, idx) for title, idx, text in all_facts)
+        found_sf = gold_sf & retrieved_ids
+        retrieval_success = gold_sf.issubset(retrieved_ids)
+        
+        verdict = llm_judge(question, answer, ground_truth)
+    
+        print(f"Q: {question}")
+        print(f"Predicted: {answer} | Gold: {ground_truth}")
+        print(f"Gold facts found: {len(found_sf)}/{len(gold_sf)}")
+        print(f"Retrieval complete: {retrieval_success}")
+        print(f"Verdict: {verdict}")
+        print("---")
 
 print("Agentic RAG-based QA")
 print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")

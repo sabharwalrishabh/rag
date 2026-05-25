@@ -36,7 +36,6 @@ sentences = [f"{title}: {text}" for title, _, text in corpus]
 # sentences = [text for _, _, text in corpus]
 # print(sentences[0])
 
-
 retriever = bm25s.BM25()
 retriever.index(bm25s.tokenize(sentences))
 

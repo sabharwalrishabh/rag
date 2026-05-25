@@ -84,6 +84,7 @@ def rerank_retrieve(question, k=15, pool_size=100):
     return [candidate for candidate, score in scored[:k]]
 
 
+#simplified prompt; old prompt in utils.py
 RAG_PROMPT = """
 Answer the question using ONLY the provided facts. Extract the answer directly from the facts. Your answer should be a short phrase, name, number, date, or yes/no. Do not explain your reasoning.
 Example answers for some random questions: B-17 Flying Fortress bomber; George Raft; 7 January 1936; yes; no; 2003
@@ -104,12 +105,6 @@ for datapoint in data[:NUM_DATA]:
     facts = "\n".join(f"- {fact}" for fact in facts_list)
     prompt = RAG_PROMPT.format(facts=facts, question=question)
 
-    # response = client.responses.create(
-    #     model="gpt-4.1-mini-2025-04-14",
-    #     input=prompt
-    # )
-
-    # answer = response.output_text.strip()
     response = openai.chat.completions.create(
         model="gpt-4.1-mini-2025-04-14",
         messages=[{"role": "user", "content": prompt}]

@@ -1,6 +1,11 @@
 import json
-from part1 import retrieve, dense_retrieve
+from utils import BM25, DenseRetriever, load_corpus
 from sentence_transformers import CrossEncoder
+
+corpus = load_corpus()
+sentences = [f"{title}: {text}" for title, _, text in corpus]
+bm25 = BM25(corpus, sentences)
+dense = DenseRetriever(corpus, sentences)
 
 def compute_metrics(gold, retrieved):
 	hits = 0
@@ -24,24 +29,24 @@ def compute_metrics(gold, retrieved):
 
 
 def hybrid_retrieve(question, k=15, rrf_k=60, pool_size=100):
-    bm25_results = retrieve(question, k=pool_size)
-    dense_results = dense_retrieve(question, k=pool_size)
+    bm25_results = bm25.retrieve(question, k=pool_size)
+    dense_results = dense.retrieve(question, k=pool_size)
     
-    # Build rank dictionaries: (title, idx) -> rank
+    #rank dicts: (title, idx) -> rank
     bm25_ranks = {}
     for rank, (title, idx, text) in enumerate(bm25_results):
-        bm25_ranks[(title, idx)] = rank + 1  # 1-indexed
+        bm25_ranks[(title, idx)] = rank + 1  
     
     dense_ranks = {}
     for rank, (title, idx, text) in enumerate(dense_results):
         dense_ranks[(title, idx)] = rank + 1
     
-    # Collect all unique sentences from both lists
+    #get unique sentences from each
     all_sentences = {}
     for title, idx, text in bm25_results + dense_results:
         all_sentences[(title, idx)] = text
     
-    # Compute RRF scores
+    #RRF scores
     default_rank = 10000
     rrf_scores = {}
     for key in all_sentences:
@@ -49,30 +54,21 @@ def hybrid_retrieve(question, k=15, rrf_k=60, pool_size=100):
         dense_rank = dense_ranks.get(key, default_rank)
         rrf_scores[key] = 0.3/(bm25_rank + rrf_k) + 0.7/(dense_rank + rrf_k)
     
-    # Sort by RRF score descending, take top-k
     sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     return [(title, idx, all_sentences[(title, idx)]) for (title, idx), score in sorted_results[:k]]
 
 
-# reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 reranker = CrossEncoder('BAAI/bge-reranker-base')
-
 def rerank_retrieve(question, k=15, pool_size=100):
-    # Step 1: Use your fast bi-encoder to get a broad candidate pool
-    candidates = dense_retrieve(question, k=pool_size)
+    #bi-encoder to get a 100 candidates 
+    candidates = dense.retrieve(question, k=pool_size)
     
-    # Step 2: Create (question, sentence) pairs for each candidate
+	#cross encoding
     pairs = [(question, f"{title}: {text}") for title, idx, text in candidates]
-    
-    # Step 3: Cross-encoder scores each pair — this is the slow part
-    # It encodes question and sentence TOGETHER through the transformer
-    # allowing full attention between query and document tokens
     scores = reranker.predict(pairs)
-    
-    # Step 4: Sort by cross-encoder scores and take top-k
-    scored = list(zip(candidates, scores))
+
+    scored = list(zip(candidates, scores)) #sort
     scored.sort(key=lambda x: x[1], reverse=True)
-    
     return [candidate for candidate, score in scored[:k]]
 
 
@@ -83,7 +79,7 @@ NUM_DATA = 100
 k_values = [1, 5, 10, 15]
 bm25_total_score = {k: {"recall": 0, "precision": 0, "f1": 0, "em": 0, "map_score": 0} for k in k_values}
 dense_total_score = {k: {"recall": 0, "precision": 0, "f1": 0, "em": 0, "map_score": 0} for k in k_values}
-bm25_only_hits = {k: 0 for k in k_values}
+# bm25_only_hits = {k: 0 for k in k_values}
 hybrid_total_score = {k: {"recall": 0, "precision": 0, "f1": 0, "em": 0, "map_score": 0} for k in k_values}
 cross_enc_total_score = {k: {"recall": 0, "precision": 0, "f1": 0, "em": 0, "map_score": 0} for k in k_values}
 
@@ -92,10 +88,10 @@ for datapoint in data[:NUM_DATA]:
 	question = datapoint["question"]
 	gold_labels = datapoint["supporting_facts"]
 
-	bm25_result = retrieve(question, k=15)
+	bm25_result = bm25.retrieve(question, k=15)
 	bm25_output = [[title, sentence_idx] for title, sentence_idx, text in bm25_result]
 
-	dense_result = dense_retrieve(question, k=15)
+	dense_result = dense.retrieve(question, k=15)
 	dense_output = [[title, sentence_idx] for title, sentence_idx, text in dense_result]
 
 	hybrid_result = hybrid_retrieve(question, k=15)
@@ -138,7 +134,7 @@ for datapoint in data[:NUM_DATA]:
 		cross_enc_total_score[k]["map_score"] += map_score
 
 
-print("Question Modified + 'Title' prepended to the embedding sentences")
+print("'Title' prepended to the embedding sentences")
 print("BM25 results:")
 for k in k_values:
 	avg_recall = round(bm25_total_score[k]["recall"] / NUM_DATA, 4)

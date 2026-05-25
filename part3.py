@@ -72,16 +72,16 @@ print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
 #-------RAG-based QA------------#
 reranker = CrossEncoder('BAAI/bge-reranker-base')
 def rerank_retrieve(question, k=15, pool_size=100):
-    #bi-encoder to get a 100 candidates 
-    candidates = dense.retrieve(question, k=pool_size)
-    
-	#cross encoding
-    pairs = [(question, f"{title}: {text}") for title, idx, text in candidates]
-    scores = reranker.predict(pairs)
-	
-    scored = list(zip(candidates, scores)) #sort
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [candidate for candidate, score in scored[:k]]
+	#bi-encoder to get a 100 candidates
+	candidates = dense.retrieve(question, k=pool_size)
+
+	#cross-encoding
+	pairs = [(question, f"{title}: {text}") for title, idx, text in candidates]
+	scores = reranker.predict(pairs)
+
+	scored = list(zip(candidates, scores))
+	scored.sort(key=lambda x: x[1], reverse=True)
+	return [candidate for candidate, score in scored[:k]]
 
 
 #simplified prompt; old prompt in utils.py

@@ -16,6 +16,7 @@ def load_corpus():
     with open('hotpot_dev_distractor_v1.json') as f:
         data = json.load(f)
 
+    #de-duplicate
     unique_dict = {}
     for datapoint in data:
         for title, sentences in datapoint['context']:
@@ -25,11 +26,10 @@ def load_corpus():
                 if idx not in unique_dict[title]:
                     unique_dict[title][idx] = text.strip()
 
-    corpus = [
-        (title, idx, text)
-        for title, sentence_data in unique_dict.items()
-        for idx, text in sentence_data.items()
-    ]
+    corpus = []
+    for title, sentence_data in unique_dict.items():
+        for idx, text in sentence_data.items():
+            corpus.append((title, idx, text))
 
     with open('corpus.json', 'w') as f:
         json.dump(corpus, f)
@@ -67,7 +67,7 @@ class DenseRetriever():
         scores, indices = self.index.search(question_emb, k)
         return [self.corpus[i] for i in indices[0]]
 
-
+#directly taken from https://github.com/hotpotqa/hotpot/blob/master/util.py
 def normalize_answer(s):
 
     def remove_articles(text):

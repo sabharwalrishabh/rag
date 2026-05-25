@@ -29,47 +29,47 @@ def compute_metrics(gold, retrieved):
 
 
 def hybrid_retrieve(question, k=15, rrf_k=60, pool_size=100):
-    bm25_results = bm25.retrieve(question, k=pool_size)
-    dense_results = dense.retrieve(question, k=pool_size)
-    
-    #rank dicts: (title, idx) -> rank
-    bm25_ranks = {}
-    for rank, (title, idx, text) in enumerate(bm25_results):
-        bm25_ranks[(title, idx)] = rank + 1  
-    
-    dense_ranks = {}
-    for rank, (title, idx, text) in enumerate(dense_results):
-        dense_ranks[(title, idx)] = rank + 1
-    
-    #get unique sentences from each
-    all_sentences = {}
-    for title, idx, text in bm25_results + dense_results:
-        all_sentences[(title, idx)] = text
-    
-    #RRF scores
-    default_rank = 10000
-    rrf_scores = {}
-    for key in all_sentences:
-        bm25_rank = bm25_ranks.get(key, default_rank)
-        dense_rank = dense_ranks.get(key, default_rank)
-        rrf_scores[key] = 0.3/(bm25_rank + rrf_k) + 0.7/(dense_rank + rrf_k)
-    
-    sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-    return [(title, idx, all_sentences[(title, idx)]) for (title, idx), score in sorted_results[:k]]
+	bm25_results = bm25.retrieve(question, k=pool_size)
+	dense_results = dense.retrieve(question, k=pool_size)
+
+	#rank dicts: (title, idx) -> rank
+	bm25_ranks = {}
+	for rank, (title, idx, text) in enumerate(bm25_results):
+		bm25_ranks[(title, idx)] = rank + 1
+
+	dense_ranks = {}
+	for rank, (title, idx, text) in enumerate(dense_results):
+		dense_ranks[(title, idx)] = rank + 1
+
+	#get unique sentences from each
+	all_sentences = {}
+	for title, idx, text in bm25_results + dense_results:
+		all_sentences[(title, idx)] = text
+
+	#RRF scores
+	default_rank = 10000
+	rrf_scores = {}
+	for key in all_sentences:
+		bm25_rank = bm25_ranks.get(key, default_rank)
+		dense_rank = dense_ranks.get(key, default_rank)
+		rrf_scores[key] = 0.3/(bm25_rank + rrf_k) + 0.7/(dense_rank + rrf_k)
+
+	sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+	return [(title, idx, all_sentences[(title, idx)]) for (title, idx), score in sorted_results[:k]]
 
 
 reranker = CrossEncoder('BAAI/bge-reranker-base')
 def rerank_retrieve(question, k=15, pool_size=100):
-    #bi-encoder to get a 100 candidates 
-    candidates = dense.retrieve(question, k=pool_size)
-    
-	#cross encoding
-    pairs = [(question, f"{title}: {text}") for title, idx, text in candidates]
-    scores = reranker.predict(pairs)
+	#bi-encoder to get a 100 candidates
+	candidates = dense.retrieve(question, k=pool_size)
 
-    scored = list(zip(candidates, scores)) #sort
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [candidate for candidate, score in scored[:k]]
+	#cross-encoding
+	pairs = [(question, f"{title}: {text}") for title, idx, text in candidates]
+	scores = reranker.predict(pairs)
+
+	scored = list(zip(candidates, scores))
+	scored.sort(key=lambda x: x[1], reverse=True)
+	return [candidate for candidate, score in scored[:k]]
 
 
 with open("hotpot_dev_distractor_v1.json", "r") as f:

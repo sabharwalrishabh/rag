@@ -1,13 +1,19 @@
 import json
+import os
+import re
+import argparse
 from dotenv import load_dotenv
 from openai import OpenAI
 import openai
 from utils import f1_score, exact_match_score, DenseRetriever, load_corpus
 from sentence_transformers import CrossEncoder
 
-load_dotenv()
-client = OpenAI()
 
+def extract_answer(content):
+    return re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+
+
+NUM_DATA = 100
 with open("hotpot_dev_distractor_v1.json", "r") as f:
 	data = json.load(f)
 
@@ -18,56 +24,40 @@ dense = DenseRetriever(corpus, sentences)
 #-------NO-RETRIEVAL QA------------#
 NO_RETRIEVAL_PROMPT = """
 Your task is to answer the given question concisely. Your answer should be a short phrase, name, number, date or yes/no. Do not explain your reasoning.
-
-Examples:
-Q: Which airplane was this Major test-flying after whom the base, that 514th Flight Test Squadron is stated at, is named?
-A: B-17 Flying Fortress bomber
-
-Q: Which American film actor and dancer starred in the 1945 film Johnny Angel?
-A: George Raft
-
-Q: When was the British author who wrote the novel on which "Here We Go Round the Mulberry Bush" was based born? 
-A: 7 January 1936
-
-Q: Are Daryl Hall and Gerry Marsden both musicians?
-A: yes
-
-Q: Were the bands Skin Yard and Ostava from the U.S.?
-A: no
-
-Q: What year was the brother of this first round draft pick by the Washington Redskins drafted?
-A: 2003
+Example answers for some random questions: B-17 Flying Fortress bomber; George Raft; 7 January 1936; yes; no; 2003.
 
 Q: {question}
 A:
 """
 
-NUM_DATA = 100
-total_em, total_f1 = 0, 0
-print("QA begins")
-for datapoint in data[:NUM_DATA]:
-    question = datapoint["question"]
-    prompt = NO_RETRIEVAL_PROMPT.format(question=question)
 
-    response = client.responses.create(
-        model="gpt-4.1-mini-2025-04-14",
-        input=prompt
-    )
+def no_rag_baseline(model_name, client):
+    total_em, total_f1 = 0, 0
+    print("QA begins")
+    for datapoint in data[:NUM_DATA]:
+        question = datapoint["question"]
+        prompt = NO_RETRIEVAL_PROMPT.format(question=question)
 
-    answer = response.output_text.strip()
-    # print(f"Q: {question}")
-    # print(f"A: {answer}")
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}]
+        )
 
-    ground_truth = datapoint["answer"]
-    em = exact_match_score(answer, ground_truth)
-    f1, _, _ = f1_score(answer, ground_truth)
+        answer = extract_answer(response.choices[0].message.content)
+        # print(f"Q: {question}")
+        # print(f"A: {answer}")
 
-    total_em += em
-    total_f1 += f1
+        ground_truth = datapoint["answer"]
+        em = exact_match_score(answer, ground_truth)
+        f1, _, _ = f1_score(answer, ground_truth)
 
-print("No Retrieval QA")
-print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
-print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
+        total_em += em
+        total_f1 += f1
+
+    print("No Retrieval QA")
+    print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
+    print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
+
 
 #-------RAG-based QA------------#
 reranker = CrossEncoder('BAAI/bge-reranker-base')
@@ -96,30 +86,32 @@ Q: {question}
 A:
 """
 
-total_em, total_f1 = 0, 0
-for datapoint in data[:NUM_DATA]:
-    question = datapoint["question"]
-    cross_enc_result = rerank_retrieve(question, k=5)
 
-    facts_list = [f"{title}: {text}" for title, idx, text in cross_enc_result]
-    facts = "\n".join(f"- {fact}" for fact in facts_list)
-    prompt = RAG_PROMPT.format(facts=facts, question=question)
+def rag_baseline(model_name, client):
+    total_em, total_f1 = 0, 0
+    for datapoint in data[:NUM_DATA]:
+        question = datapoint["question"]
+        cross_enc_result = rerank_retrieve(question, k=5)
 
-    response = openai.chat.completions.create(
-        model="gpt-4.1-mini-2025-04-14",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    answer = response.choices[0].message.content.strip()
-    ground_truth = datapoint["answer"]
-    em = exact_match_score(answer, ground_truth)
-    f1, _, _ = f1_score(answer, ground_truth)
+        facts_list = [f"{title}: {text}" for title, idx, text in cross_enc_result]
+        facts = "\n".join(f"- {fact}" for fact in facts_list)
+        prompt = RAG_PROMPT.format(facts=facts, question=question)
 
-    total_em += em
-    total_f1 += f1
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        answer = extract_answer(response.choices[0].message.content)
+        ground_truth = datapoint["answer"]
+        em = exact_match_score(answer, ground_truth)
+        f1, _, _ = f1_score(answer, ground_truth)
 
-print("RAG-based QA")
-print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
-print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
+        total_em += em
+        total_f1 += f1
+
+    print("RAG-based QA")
+    print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
+    print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
 
 #---------Agentic RAG--------------#
 tools = [
@@ -143,7 +135,7 @@ tools = [
 ]
 
 
-def agentic_rag(question):
+def agentic_rag(model_name, client, question):
     #Get initial facts
     cross_enc_result = rerank_retrieve(question, k=5)
     all_results = list(cross_enc_result)
@@ -155,8 +147,8 @@ def agentic_rag(question):
     ]
 
     for _ in range(2):
-        response = openai.chat.completions.create(
-            model="gpt-4.1-mini-2025-04-14",
+        response = client.chat.completions.create(
+            model=model_name,
             messages=messages,
             tools=tools
         )
@@ -185,11 +177,12 @@ def agentic_rag(question):
     facts_str = "\n".join(f"- {f}" for f in all_facts)
     prompt = RAG_PROMPT.format(facts=facts_str, question=question)
 
-    response = openai.chat.completions.create(
-        model="gpt-4.1-mini-2025-04-14",
+    response = client.chat.completions.create(
+        model=model_name,
         messages=[{"role": "user", "content": prompt}]
     )
-    return response.choices[0].message.content.strip(), all_results
+    return extract_answer(response.choices[0].message.content), all_results
+
 
 def llm_judge(question, predicted, gold):
     prompt = f"""You are a judge comparing two answers to a question. 
@@ -203,41 +196,82 @@ def llm_judge(question, predicted, gold):
                 - INCORRECT (wrong answer)
                 - PARTIAL (partially correct but missing or extra information)"""
 
-    response = openai.chat.completions.create(
+    response = eval_client.chat.completions.create(
         model="gpt-4.1-2025-04-14",
         messages=[{"role": "user", "content": prompt}]
     )
-    return response.choices[0].message.content.strip()
+    return extract_answer(response.choices[0].message.content)
 
 
-total_em, total_f1 = 0, 0
-for datapoint in data[:NUM_DATA]:
-    question = datapoint["question"]
-    answer, all_facts = agentic_rag(question)  
-    ground_truth = datapoint["answer"]
-
-    gold_sf = set((t, i) for t, i in datapoint["supporting_facts"])
-    
-    em = exact_match_score(answer, ground_truth)
-    f1, _, _ = f1_score(answer, ground_truth)
-    
-    total_em += em
-    total_f1 += f1
-    if em == 0:
-        # Check if gold facts were retrieved
-        retrieved_ids = set((title, idx) for title, idx, text in all_facts)
-        found_sf = gold_sf & retrieved_ids
-        retrieval_success = gold_sf.issubset(retrieved_ids)
+def agentic_rag_baseline(model_name, client, use_judge=False):
+    total_em, total_f1 = 0, 0
+    for datapoint in data[:NUM_DATA]:
+        question = datapoint["question"]
+        answer, all_facts = agentic_rag(model_name, client, question)  
+        ground_truth = datapoint["answer"]
         
-        verdict = llm_judge(question, answer, ground_truth)
-    
-        print(f"Q: {question}")
-        print(f"Predicted: {answer} | Gold: {ground_truth}")
-        print(f"Gold facts found: {len(found_sf)}/{len(gold_sf)}")
-        print(f"Retrieval complete: {retrieval_success}")
-        print(f"Verdict: {verdict}")
-        print("---")
+        em = exact_match_score(answer, ground_truth)
+        f1, _, _ = f1_score(answer, ground_truth)
+        
+        total_em += em
+        total_f1 += f1
 
-print("Agentic RAG-based QA")
-print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
-print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
+        if use_judge:
+            if em == 0:
+                gold_sf = set((title, idx) for title, idx in datapoint["supporting_facts"])
+                # Check if gold facts were retrieved
+                retrieved_ids = set((title, idx) for title, idx, text in all_facts)
+                found_sf = gold_sf & retrieved_ids
+                retrieval_success = gold_sf.issubset(retrieved_ids)
+                
+                verdict = llm_judge(question, answer, ground_truth)
+            
+                print(f"Q: {question}")
+                print(f"Predicted: {answer} | Gold: {ground_truth}")
+                print(f"Gold facts found: {len(found_sf)}/{len(gold_sf)}")
+                print(f"Retrieval complete: {retrieval_success}")
+                print(f"Verdict: {verdict}")
+                print("---")
+
+    print("Agentic RAG-based QA")
+    print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
+    print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_rag_baseline", action="store_true", help="whether to run the 'no rag' baseline or not")
+    parser.add_argument("--rag_baseline", action="store_true", help="whether to run the 'rag'")
+    parser.add_argument("--agentic_rag_baseline", action="store_true", help="whether to run the 'agentic rag' or not")
+    parser.add_argument("--use_judge", action="store_true", help="whether to use an LLM as judge or not")
+    parser.add_argument("--model", type=str, default="gpt-4.1-mini-2025-04-14",
+                    choices=["gpt-4.1-mini-2025-04-14", "qwen3-8b"],
+                    help="which LLM backend to use")
+    args = parser.parse_args()
+
+    load_dotenv()
+
+    if args.use_judge and not os.environ.get("OPENAI_API_KEY"):
+        raise EnvironmentError("--use_judge requires OPENAI_API_KEY to be set in the environment or .env file")
+
+    if args.model == "qwen3-8b":
+        client = OpenAI(base_url="http://localhost:8002/v1", api_key="not-required")
+        model_name = "Qwen/Qwen3-8B-AWQ"
+    else:
+        client = OpenAI()
+        model_name = "gpt-4.1-mini-2025-04-14"
+    
+    if args.use_judge:
+        
+        eval_client = OpenAI()
+
+    if args.no_rag_baseline:
+        print("Running the no RAG baseline")
+        no_rag_baseline(model_name, client)
+    if args.rag_baseline:
+        print("Running the RAG baseline")
+        rag_baseline(model_name, client)
+    if args.agentic_rag_baseline:
+        print("Running the agentic RAG baseline")
+        agentic_rag_baseline(model_name, client, args.use_judge)
+    

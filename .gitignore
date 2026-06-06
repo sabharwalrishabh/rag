@@ -1,4 +1,5 @@
 *.json
+*.npy
 __pycache__/
 *.py[cod]
 .env
@@ -7,9 +8,3 @@ dist/
 build/
 .venv/
 venv/
-
-hotpot_dev_distractor_v1.json
-embeddings.npy
-corpus.json
-embeddings_without_title.npy
-/home/s2850909/huawei/corpus_without_title.json

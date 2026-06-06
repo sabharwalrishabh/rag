@@ -1,4 +1,6 @@
 import json
+import os
+import re
 import argparse
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -7,8 +9,11 @@ from utils import f1_score, exact_match_score, DenseRetriever, load_corpus
 from sentence_transformers import CrossEncoder
 
 
+def extract_answer(content):
+    return re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+
+
 NUM_DATA = 100
-load_dotenv()
 with open("hotpot_dev_distractor_v1.json", "r") as f:
 	data = json.load(f)
 
@@ -19,25 +24,7 @@ dense = DenseRetriever(corpus, sentences)
 #-------NO-RETRIEVAL QA------------#
 NO_RETRIEVAL_PROMPT = """
 Your task is to answer the given question concisely. Your answer should be a short phrase, name, number, date or yes/no. Do not explain your reasoning.
-
-Examples:
-Q: Which airplane was this Major test-flying after whom the base, that 514th Flight Test Squadron is stated at, is named?
-A: B-17 Flying Fortress bomber
-
-Q: Which American film actor and dancer starred in the 1945 film Johnny Angel?
-A: George Raft
-
-Q: When was the British author who wrote the novel on which "Here We Go Round the Mulberry Bush" was based born? 
-A: 7 January 1936
-
-Q: Are Daryl Hall and Gerry Marsden both musicians?
-A: yes
-
-Q: Were the bands Skin Yard and Ostava from the U.S.?
-A: no
-
-Q: What year was the brother of this first round draft pick by the Washington Redskins drafted?
-A: 2003
+Example answers for some random questions: B-17 Flying Fortress bomber; George Raft; 7 January 1936; yes; no; 2003.
 
 Q: {question}
 A:
@@ -56,7 +43,7 @@ def no_rag_baseline(model_name, client):
             messages=[{"role": "user", "content": prompt}]
         )
 
-        answer = response.choices[0].message.content.strip()
+        answer = extract_answer(response.choices[0].message.content)
         # print(f"Q: {question}")
         # print(f"A: {answer}")
 
@@ -114,7 +101,7 @@ def rag_baseline(model_name, client):
             model=model_name,
             messages=[{"role": "user", "content": prompt}]
         )
-        answer = response.choices[0].message.content.strip()
+        answer = extract_answer(response.choices[0].message.content)
         ground_truth = datapoint["answer"]
         em = exact_match_score(answer, ground_truth)
         f1, _, _ = f1_score(answer, ground_truth)
@@ -194,10 +181,9 @@ def agentic_rag(model_name, client, question):
         model=model_name,
         messages=[{"role": "user", "content": prompt}]
     )
-    return response.choices[0].message.content.strip(), all_results
+    return extract_answer(response.choices[0].message.content), all_results
 
 
-eval_client = OpenAI()
 def llm_judge(question, predicted, gold):
     prompt = f"""You are a judge comparing two answers to a question. 
                 Determine if the predicted answer is semantically correct, even if phrased differently.
@@ -214,7 +200,7 @@ def llm_judge(question, predicted, gold):
         model="gpt-4.1-2025-04-14",
         messages=[{"role": "user", "content": prompt}]
     )
-    return response.choices[0].message.content.strip()
+    return extract_answer(response.choices[0].message.content)
 
 
 def agentic_rag_baseline(model_name, client, use_judge=False):
@@ -263,17 +249,29 @@ if __name__ == "__main__":
                     help="which LLM backend to use")
     args = parser.parse_args()
 
+    load_dotenv()
+
+    if args.use_judge and not os.environ.get("OPENAI_API_KEY"):
+        raise EnvironmentError("--use_judge requires OPENAI_API_KEY to be set in the environment or .env file")
+
     if args.model == "qwen3-8b":
-        client = OpenAI(base_url="http://localhost:8001/v1", api_key="not-required")
-        model_name = "Qwen/Qwen3-8B"
+        client = OpenAI(base_url="http://localhost:8002/v1", api_key="not-required")
+        model_name = "Qwen/Qwen3-8B-AWQ"
     else:
         client = OpenAI()
         model_name = "gpt-4.1-mini-2025-04-14"
+    
+    if args.use_judge:
+        
+        eval_client = OpenAI()
 
     if args.no_rag_baseline:
+        print("Running the no RAG baseline")
         no_rag_baseline(model_name, client)
     if args.rag_baseline:
+        print("Running the RAG baseline")
         rag_baseline(model_name, client)
     if args.agentic_rag_baseline:
+        print("Running the agentic RAG baseline")
         agentic_rag_baseline(model_name, client, args.use_judge)
     

@@ -31,6 +31,8 @@ def compute_metrics(gold, retrieved):
 def hybrid_retrieve(question, k=15, rrf_k=60, pool_size=100):
 	bm25_results = bm25.retrieve(question, k=pool_size)
 	dense_results = dense.retrieve(question, k=pool_size)
+	sparse_weight = 0.3
+	dense_weight = 0.7
 
 	#rank dicts: (title, idx) -> rank
 	bm25_ranks = {}
@@ -52,7 +54,7 @@ def hybrid_retrieve(question, k=15, rrf_k=60, pool_size=100):
 	for key in all_sentences:
 		bm25_rank = bm25_ranks.get(key, default_rank)
 		dense_rank = dense_ranks.get(key, default_rank)
-		rrf_scores[key] = 0.3/(bm25_rank + rrf_k) + 0.7/(dense_rank + rrf_k)
+		rrf_scores[key] = sparse_weight / (bm25_rank + rrf_k) + dense_weight / (dense_rank + rrf_k)
 
 	sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
 	return [(title, idx, all_sentences[(title, idx)]) for (title, idx), score in sorted_results[:k]]

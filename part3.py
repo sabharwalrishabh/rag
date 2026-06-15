@@ -5,8 +5,7 @@ import argparse
 from dotenv import load_dotenv
 from openai import OpenAI
 import openai
-from utils import f1_score, exact_match_score, DenseRetriever, load_corpus
-from sentence_transformers import CrossEncoder
+from utils import f1_score, exact_match_score, DenseRetriever, load_corpus, rerank_retrieve
 
 
 def extract_answer(content):
@@ -16,10 +15,6 @@ def extract_answer(content):
 NUM_DATA = 100
 with open("hotpot_dev_distractor_v1.json", "r") as f:
 	data = json.load(f)
-
-corpus = load_corpus()
-sentences = [f"{title}: {text}" for title, _, text in corpus]
-dense = DenseRetriever(corpus, sentences)
 
 #-------NO-RETRIEVAL QA------------#
 NO_RETRIEVAL_PROMPT = """
@@ -44,8 +39,6 @@ def no_rag_baseline(model_name, client):
         )
 
         answer = extract_answer(response.choices[0].message.content)
-        # print(f"Q: {question}")
-        # print(f"A: {answer}")
 
         ground_truth = datapoint["answer"]
         em = exact_match_score(answer, ground_truth)
@@ -60,20 +53,6 @@ def no_rag_baseline(model_name, client):
 
 
 #-------RAG-based QA------------#
-reranker = CrossEncoder('BAAI/bge-reranker-base')
-def rerank_retrieve(question, k=15, pool_size=100):
-	#bi-encoder to get a 100 candidates
-	candidates = dense.retrieve(question, k=pool_size)
-
-	#cross-encoding
-	pairs = [(question, f"{title}: {text}") for title, idx, text in candidates]
-	scores = reranker.predict(pairs)
-
-	scored = list(zip(candidates, scores))
-	scored.sort(key=lambda x: x[1], reverse=True)
-	return [candidate for candidate, score in scored[:k]]
-
-
 #simplified prompt; old prompt in utils.py
 RAG_PROMPT = """
 Answer the question using ONLY the provided facts. Extract the answer directly from the facts. Your answer should be a short phrase, name, number, date, or yes/no. Do not explain your reasoning.
@@ -87,11 +66,11 @@ A:
 """
 
 
-def rag_baseline(model_name, client):
+def rag_baseline(dense, model_name, client):
     total_em, total_f1 = 0, 0
     for datapoint in data[:NUM_DATA]:
         question = datapoint["question"]
-        cross_enc_result = rerank_retrieve(question, k=5)
+        cross_enc_result = rerank_retrieve(dense, question, k=5)
 
         facts_list = [f"{title}: {text}" for title, idx, text in cross_enc_result]
         facts = "\n".join(f"- {fact}" for fact in facts_list)
@@ -112,6 +91,7 @@ def rag_baseline(model_name, client):
     print("RAG-based QA")
     print(f"Avg EM score: {round(total_em / NUM_DATA, 4)}")
     print(f"Avg F1 score: {round(total_f1 / NUM_DATA, 4)}")
+
 
 #---------Agentic RAG--------------#
 tools = [
@@ -135,9 +115,9 @@ tools = [
 ]
 
 
-def agentic_rag(model_name, client, question):
+def agentic_rag(dense, model_name, client, question):
     #Get initial facts
-    cross_enc_result = rerank_retrieve(question, k=5)
+    cross_enc_result = rerank_retrieve(dense, question, k=5)
     all_results = list(cross_enc_result)
     all_facts = [f"{title}: {text}" for title, idx, text in cross_enc_result]
 
@@ -155,12 +135,12 @@ def agentic_rag(model_name, client, question):
         msg = response.choices[0].message
 
         if not msg.tool_calls:
-            break  
+            break
 
         messages.append(msg)
         for tool_call in msg.tool_calls:
             query = json.loads(tool_call.function.arguments)["query"]
-            results = rerank_retrieve(query, k=5)
+            results = rerank_retrieve(dense, query, k=5)
             new_facts = [f"{title}: {text}" for title, idx, text in results]
             all_facts.extend(new_facts)
             all_results.extend(results)
@@ -184,8 +164,8 @@ def agentic_rag(model_name, client, question):
     return extract_answer(response.choices[0].message.content), all_results
 
 
-def llm_judge(question, predicted, gold):
-    prompt = f"""You are a judge comparing two answers to a question. 
+def llm_judge(eval_client, question, predicted, gold):
+    prompt = f"""You are a judge comparing two answers to a question.
                 Determine if the predicted answer is semantically correct, even if phrased differently.
                 Question: {question}\n
                 Gold answer: {gold}\n
@@ -203,29 +183,28 @@ def llm_judge(question, predicted, gold):
     return extract_answer(response.choices[0].message.content)
 
 
-def agentic_rag_baseline(model_name, client, use_judge=False):
+def agentic_rag_baseline(dense, model_name, client, use_judge=False, eval_client=None):
     total_em, total_f1 = 0, 0
     for datapoint in data[:NUM_DATA]:
         question = datapoint["question"]
-        answer, all_facts = agentic_rag(model_name, client, question)  
+        answer, all_facts = agentic_rag(dense, model_name, client, question)
         ground_truth = datapoint["answer"]
-        
+
         em = exact_match_score(answer, ground_truth)
         f1, _, _ = f1_score(answer, ground_truth)
-        
+
         total_em += em
         total_f1 += f1
 
         if use_judge:
             if em == 0:
                 gold_sf = set((title, idx) for title, idx in datapoint["supporting_facts"])
-                # Check if gold facts were retrieved
                 retrieved_ids = set((title, idx) for title, idx, text in all_facts)
                 found_sf = gold_sf & retrieved_ids
                 retrieval_success = gold_sf.issubset(retrieved_ids)
-                
-                verdict = llm_judge(question, answer, ground_truth)
-            
+
+                verdict = llm_judge(eval_client, question, answer, ground_truth)
+
                 print(f"Q: {question}")
                 print(f"Predicted: {answer} | Gold: {ground_truth}")
                 print(f"Gold facts found: {len(found_sf)}/{len(gold_sf)}")
@@ -254,6 +233,10 @@ if __name__ == "__main__":
     if args.use_judge and not os.environ.get("OPENAI_API_KEY"):
         raise EnvironmentError("--use_judge requires OPENAI_API_KEY to be set in the environment or .env file")
 
+    corpus = load_corpus()
+    sentences = [f"{title}: {text}" for title, _, text in corpus]
+    dense = DenseRetriever(corpus, sentences)
+
     if args.model == "qwen3-8b":
         client = OpenAI(base_url="http://localhost:8002/v1", api_key="not-required")
         model_name = "Qwen/Qwen3-8B-AWQ"
@@ -270,8 +253,7 @@ if __name__ == "__main__":
         no_rag_baseline(model_name, client)
     if args.rag_baseline:
         print("Running the RAG baseline")
-        rag_baseline(model_name, client)
+        rag_baseline(dense, model_name, client)
     if args.agentic_rag_baseline:
         print("Running the agentic RAG baseline")
-        agentic_rag_baseline(model_name, client, args.use_judge)
-    
+        agentic_rag_baseline(dense, model_name, client, args.use_judge, eval_client)

@@ -1,7 +1,7 @@
 import json
 import os
 import bm25s
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import faiss
 import numpy as np
 import re
@@ -87,6 +87,46 @@ def normalize_answer(s):
 
 def exact_match_score(prediction, ground_truth):
     return (normalize_answer(prediction) == normalize_answer(ground_truth))
+
+def hybrid_retrieve(bm25, dense, question, k=15, rrf_k=60, pool_size=100):
+    bm25_results = bm25.retrieve(question, k=pool_size)
+    dense_results = dense.retrieve(question, k=pool_size)
+    sparse_weight = 0.3
+    dense_weight = 0.7
+
+    bm25_ranks = {}
+    for rank, (title, idx, text) in enumerate(bm25_results):
+        bm25_ranks[(title, idx)] = rank + 1
+
+    dense_ranks = {}
+    for rank, (title, idx, text) in enumerate(dense_results):
+        dense_ranks[(title, idx)] = rank + 1
+
+    all_sentences = {}
+    for title, idx, text in bm25_results + dense_results:
+        all_sentences[(title, idx)] = text
+
+    default_rank = 10000
+    rrf_scores = {}
+    for key in all_sentences:
+        bm25_rank = bm25_ranks.get(key, default_rank)
+        dense_rank = dense_ranks.get(key, default_rank)
+        rrf_scores[key] = sparse_weight / (bm25_rank + rrf_k) + dense_weight / (dense_rank + rrf_k)
+
+    sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    return [(title, idx, all_sentences[(title, idx)]) for (title, idx), score in sorted_results[:k]]
+
+
+reranker = CrossEncoder('BAAI/bge-reranker-base')
+
+def rerank_retrieve(dense, question, k=15, pool_size=100):
+    candidates = dense.retrieve(question, k=pool_size)
+    pairs = [(question, f"{title}: {text}") for title, idx, text in candidates]
+    scores = reranker.predict(pairs)
+    scored = list(zip(candidates, scores))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [candidate for candidate, score in scored[:k]]
+
 
 def f1_score(prediction, ground_truth):
     normalized_prediction = normalize_answer(prediction)

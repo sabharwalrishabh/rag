@@ -1,9 +1,13 @@
-import json
 import os
-import bm25s
-from sentence_transformers import SentenceTransformer, CrossEncoder
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+import json
 import faiss
 import numpy as np
+import bm25s
+from sentence_transformers import SentenceTransformer, CrossEncoder
 import re
 import string
 from collections import Counter
@@ -50,7 +54,7 @@ class BM25():
 class DenseRetriever():
     def __init__(self, corpus, sentences):
         self.corpus = corpus
-        self.model = SentenceTransformer('BAAI/bge-base-en-v1.5', device='cuda')
+        self.model = SentenceTransformer('BAAI/bge-base-en-v1.5', device='cpu')
 
         if os.path.exists('embeddings.npy'):
             embeddings = np.load('embeddings.npy')
@@ -58,12 +62,13 @@ class DenseRetriever():
             embeddings = self.model.encode(sentences, normalize_embeddings=True, batch_size=512, show_progress_bar=True)
             np.save('embeddings.npy', embeddings)
 
+        embeddings = np.array(embeddings, dtype=np.float32)
         self.index = faiss.IndexFlatIP(embeddings.shape[1])
         self.index.add(embeddings)
 
     def retrieve(self, question, k=5):
         question = "Represent this sentence for searching relevant passages: " + question
-        question_emb = self.model.encode([question], normalize_embeddings=True)
+        question_emb = np.array(self.model.encode([question], normalize_embeddings=True), dtype=np.float32)
         scores, indices = self.index.search(question_emb, k)
         return [self.corpus[i] for i in indices[0]]
 
@@ -117,7 +122,7 @@ def hybrid_retrieve(bm25, dense, question, k=15, rrf_k=60, pool_size=100):
     return [(title, idx, all_sentences[(title, idx)]) for (title, idx), score in sorted_results[:k]]
 
 
-reranker = CrossEncoder('BAAI/bge-reranker-base')
+reranker = CrossEncoder('BAAI/bge-reranker-base', device='cpu')
 
 def rerank_retrieve(dense, question, k=15, pool_size=100):
     candidates = dense.retrieve(question, k=pool_size)

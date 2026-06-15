@@ -1,5 +1,9 @@
-import json
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+import json
 import re
 import argparse
 from dotenv import load_dotenv
@@ -12,7 +16,7 @@ def extract_answer(content):
     return re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
 
 
-NUM_DATA = 100
+NUM_DATA = 1
 with open("hotpot_dev_distractor_v1.json", "r") as f:
 	data = json.load(f)
 
@@ -244,8 +248,8 @@ if __name__ == "__main__":
         client = OpenAI()
         model_name = "gpt-4.1-mini-2025-04-14"
     
+    eval_client = None
     if args.use_judge:
-        
         eval_client = OpenAI()
 
     if args.no_rag_baseline:

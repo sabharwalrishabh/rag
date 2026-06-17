@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+.env
+.git
+.gitignore
+
+# Large data files — mounted as volumes at runtime, not baked into the image
+*.npy
+*.json
+!hotpot_dev_distractor_v1.json

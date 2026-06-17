@@ -56,11 +56,13 @@ class DenseRetriever():
         self.corpus = corpus
         self.model = SentenceTransformer('BAAI/bge-base-en-v1.5', device='cpu')
 
-        if os.path.exists('embeddings.npy'):
-            embeddings = np.load('embeddings.npy')
+        cache_path = 'cache/embeddings.npy'
+        if os.path.exists(cache_path):
+            embeddings = np.load(cache_path)
         else:
             embeddings = self.model.encode(sentences, normalize_embeddings=True, batch_size=512, show_progress_bar=True)
-            np.save('embeddings.npy', embeddings)
+            os.makedirs('cache', exist_ok=True)
+            np.save(cache_path, embeddings)
 
         embeddings = np.array(embeddings, dtype=np.float32)
         self.index = faiss.IndexFlatIP(embeddings.shape[1])

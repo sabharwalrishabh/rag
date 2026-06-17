@@ -25,13 +25,10 @@
 
 # Core ML
 torch==2.7.0+cu126
-torchvision==0.22.0+cu126
-torchaudio==2.7.0+cu126
 transformers==4.57.6
 tokenizers==0.22.2
 safetensors==0.7.0
 huggingface_hub==0.36.2
-accelerate
 
 # vLLM (installed separately — see STEP 2 above)
 # vllm==0.9.1+cu126
@@ -41,42 +38,16 @@ sentence-transformers==5.5.1
 faiss-cpu==1.14.2
 bm25s==0.3.9
 
+# API
+fastapi==0.136.3
+uvicorn==0.49.0
+pydantic==2.13.4
+
 # OpenAI client
 openai==2.41.0
 python-dotenv==1.2.2
 
-# Numerics
+# Numerics / utilities
 numpy==2.2.6
-scipy==1.17.1
-numba==0.61.2
-
-# vLLM runtime dependencies
-aiohttp==3.14.0
-blake3==1.0.8
-cachetools==7.1.4
-cloudpickle==3.1.2
-compressed-tensors==0.10.1
-depyf==0.18.0
-einops==0.8.2
-fastapi==0.136.3
-filelock==3.29.1
-lark==1.2.2
-mistral_common==1.11.3
-msgspec==0.21.1
-ninja==1.13.0
-outlines==0.1.11
-packaging==26.2
-pillow==12.2.0
-protobuf==6.33.6
-psutil==7.2.2
-pydantic==2.13.4
-pyzmq==27.1.0
-ray==2.55.1
-regex==2026.5.9
-requests==2.34.2
-sentencepiece==0.2.1
 tqdm==4.68.1
-triton==3.3.0
-uvicorn==0.49.0
-xformers==0.0.30
-xgrammar==0.1.19
+sentencepiece==0.2.1
